@@ -6,8 +6,9 @@ gi.require_version('Gdk', '3.0')
 import logging
 from ulauncher.api.client.EventListener import EventListener
 from ulauncher.api.client.Extension import Extension
-from ulauncher.api.shared.action.ExtensionCustomAction import ExtensionCustomAction
+from ulauncher.api.shared.action.ExtensionCustomAction import ExtensionCustomAction # Keep this import, but we'll switch to RunScriptAction for activation
 from ulauncher.api.shared.action.RenderResultListAction import RenderResultListAction
+from ulauncher.api.shared.action.RunScriptAction import RunScriptAction # Make sure this is imported
 from ulauncher.api.shared.event import ItemEnterEvent, KeywordQueryEvent
 from ulauncher.api.shared.item.ExtensionResultItem import ExtensionResultItem
 
@@ -38,13 +39,14 @@ def list_windows():
     return [window for window in screen.get_windows() if not is_hidden_window(window)]
 
 
-def activate(window):
-    workspace = window.get_workspace()
-    if workspace is not None:
-        # We need to first activate the workspace, otherwise windows on a different workspace might not become visible
-        workspace.activate(int(time.time()))
-
-    window.activate(int(time.time()))
+# The activate function using Wnck will no longer be used for the final activation,
+# as we're switching to wmctrl for that specific step.
+# def activate(window):
+#     workspace = window.get_workspace()
+#     if workspace is not None:
+#         workspace.activate(int(time.time()))
+#
+#     window.activate(int(time.time()))
 
 
 class WindowItem:
@@ -52,17 +54,21 @@ class WindowItem:
         self.id = window.get_xid()
         self.app_name = (
             window.get_application().get_name()
-        )  # https://lazka.github.io/pgi-docs/Wnck-3.0/classes/Application.html#Wnck.Application.get_name
+        )
         self.title = window.get_name()
         self.icon = self.retrieve_or_save_icon(window.get_icon())
         self.is_last = window.get_xid() == previous_selection
 
     def retrieve_or_save_icon(self, icon):
-        # Some app have crazy names, ensure we use something reasonable
         file_name = hashlib.sha224(self.app_name.encode("utf-8")).hexdigest()
-        icon_full_path = CACHE_DIR + "/" + file_name + ".png"
+        icon_full_path = os.path.join(CACHE_DIR, file_name + ".png") # Use os.path.join for better path handling
         if not os.path.isfile(icon_full_path):
-            icon.savev(icon_full_path, "png", [], [])
+            try:
+                icon.savev(icon_full_path, "png", [], [])
+            except Exception as e:
+                logger.error(f"Failed to save icon for {self.app_name} (XID: {self.id}): {e}")
+                # Fallback to a default icon if saving fails
+                return "images/icon.svg"
         return icon_full_path
 
     def to_extension_item(self):
@@ -71,11 +77,13 @@ class WindowItem:
             name=self.app_name,
             description=self.title,
             selected_by_default=self.is_last,
-            on_enter=ExtensionCustomAction(self.id, keep_app_open=False),
+            # --- MODIFICATION STARTS HERE ---
+            # Change from ExtensionCustomAction to RunScriptAction using wmctrl
+            on_enter=RunScriptAction("wmctrl -ia {}".format(self.id)),
+            # --- MODIFICATION ENDS HERE ---
         )
 
     def is_matching(self, keyword):
-        # Assumes UTF-8 input
         ascii_keyword = keyword.lower()
         return (
             ascii_keyword in self.app_name.lower()
@@ -90,7 +98,8 @@ class WindowSwitcherExtension(Extension):
         self.items = []
         self.previous_selection = None
         self.subscribe(KeywordQueryEvent, KeywordQueryEventListener())
-        self.subscribe(ItemEnterEvent, ItemEnterEventListener())
+        # The ItemEnterEvent Listener is no longer needed if we're using RunScriptAction for activation
+        # self.subscribe(ItemEnterEvent, ItemEnterEventListener())
         # Ensure the icon cache directory is created
         if not os.path.exists(CACHE_DIR):
             os.makedirs(CACHE_DIR)
@@ -100,8 +109,6 @@ class KeywordQueryEventListener(EventListener):
     def on_event(self, event, extension):
         query = event.get_argument() or str()
         if len(query.strip()) == 0:
-            # The extension has just been triggered, let's initialize the windows list.
-            # (Or we delete all previously typed characters, but we can safely ignore that case)
             logger.info("Generating Window List")
             query = ""
             extension.items = [
@@ -116,15 +123,17 @@ class KeywordQueryEventListener(EventListener):
         return RenderResultListAction(matching_items)
 
 
-class ItemEnterEventListener(EventListener):
-    def on_event(self, event, extension):
-        for window in list_windows():
-            if window.get_xid() == event.get_data():
-                previous_selection = extension.selection
-                extension.previous_selection = previous_selection
-                extension.selection = window.get_xid()
-                activate(window)
-        
+# The ItemEnterEventListener class is no longer needed if we're using RunScriptAction
+# class ItemEnterEventListener(EventListener):
+#     def on_event(self, event, extension):
+#         for window in list_windows():
+#             if window.get_xid() == event.get_data():
+#                 previous_selection = extension.selection
+#                 extension.previous_selection = previous_selection
+#                 extension.selection = window.get_xid()
+#                 activate(window)
+#                 break
+#         # Wnck.shutdown() should not be here
 
 
 if __name__ == "__main__":
