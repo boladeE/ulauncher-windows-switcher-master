@@ -17,6 +17,7 @@ List the windows which title or application name match the query term.
 
 * wnck3 (libwnck-3-0 on Ubuntu, libwnck3 on Arch)
 
-## Note: This is a modified version of the original Ulancher extention, it was modified because the window doesn't automatically focus when changed
+## Note: 
+This is a modified version of the original Ulancher extention, it was modified because the window doesn't automatically focus when changed
 Original Repo: https://github.com/beajeanm/ulauncher-windows-switcher
 
